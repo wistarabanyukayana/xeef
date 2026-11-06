@@ -1,0 +1,58 @@
+[
+  {
+    "name": "impeccable",
+    "for": "UI design work: layout, typography and visual polish that does not look generated",
+    "signals": {
+      "files": ["*.css", "*.scss", "*.tsx", "*.jsx", "*.vue", "*.svelte", "*.html"],
+      "prompts": ["looks? (ai[- ]generated|generic|templat)", "too templat", "(ugly|bland|boring|cluttered) (ui|design|page|layout)"]
+    },
+    "conflicts": ["frontend-design"],
+    "claude": { "id": "impeccable@impeccable", "install": "/plugin marketplace add pbakaus/impeccable, then /plugin install impeccable@impeccable" }
+  },
+  {
+    "name": "frontend-design",
+    "for": "bold, distinctive front-end design for landing pages and marketing sites",
+    "signals": {
+      "files": ["*.css", "*.scss", "*.tsx", "*.jsx", "*.vue", "*.svelte", "*.html"],
+      "prompts": ["landing page", "marketing (site|page)", "make it (pop|stand out|beautiful)", "more (bold|striking|distinctive)"]
+    },
+    "conflicts": ["impeccable"],
+    "claude": { "id": "frontend-design@claude-plugins-official", "install": "/plugin install frontend-design@claude-plugins-official" }
+  },
+  {
+    "name": "rust-analyzer-lsp",
+    "for": "Rust code: go-to-definition, type and error checks through rust-analyzer (needs rust-analyzer on PATH)",
+    "signals": { "files": ["*.rs", "*/Cargo.toml"], "prompts": [] },
+    "claude": { "id": "rust-analyzer-lsp@claude-plugins-official", "install": "/plugin install rust-analyzer-lsp@claude-plugins-official" }
+  },
+  {
+    "name": "prose",
+    "for": "clear, plain writing in docs, READMEs, commit messages and chat replies",
+    "signals": {
+      "files": ["*.md", "*.mdx", "*.rst"],
+      "prompts": ["too (wordy|dense)", "too long to read", "plain(er)? (words|english)", "hard to (read|follow)", "(rewrite|clean up) (the )?(docs|readme)"]
+    },
+    "claude": {
+      "id": "prose@fprochazka-claude-code-plugins",
+      "install": "/plugin marketplace add fprochazka/claude-code-plugins, then /plugin install prose@fprochazka-claude-code-plugins"
+    }
+  },
+  {
+    "name": "humanizer",
+    "for": "rewriting text that sounds AI-written so it reads like a person wrote it",
+    "signals": {
+      "files": [],
+      "prompts": ["(sounds|reads|feels) (like )?(ai|chatgpt|robotic|generated)", "humani[sz]e", "ai[- ](sounding|written|slop)"]
+    },
+    "claude": { "id": "humanizer@humanizer", "install": "/plugin marketplace add blader/humanizer, then /plugin install humanizer@humanizer" }
+  },
+  {
+    "name": "ponytail",
+    "for": "keeping code minimal: the simplest change that works, no speculative abstractions",
+    "signals": {
+      "files": [],
+      "prompts": ["over-?engineer", "too (complex|complicated|abstract)", "\\bbloat", "(simpler|simplify|less code)", "\\byagni\\b"]
+    },
+    "claude": { "id": "ponytail@ponytail", "install": "/plugin marketplace add DietrichGebert/ponytail, then /plugin install ponytail@ponytail" }
+  }
+]

@@ -3,6 +3,7 @@
     "target": "es2022",
     "module": "nodenext",
     "strict": true,
+    "resolveJsonModule": true,
     "noEmit": true,
     "types": ["node"],
     "skipLibCheck": true

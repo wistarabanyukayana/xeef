@@ -4,9 +4,10 @@ Xeef (say "zeef") watches a Claude Code session. After each turn, a cheap model 
 
 - restate a request it seems to have misread,
 - move to a stronger model or effort when the work goes in circles or the stakes are high,
-- step down to a lighter model when the work is routine.
+- step down to a lighter model when the work is routine,
+- install a plugin that fits the work, once.
 
-Xeef only suggests. It never changes your model and never blocks a turn. Most turns it says nothing.
+Xeef only suggests. It never changes your model, never installs anything and never blocks a turn. Most turns it says nothing.
 
 Claude Code is supported today. Codex, agy (Antigravity CLI) and opencode will follow.
 
@@ -36,6 +37,16 @@ To remove Xeef, run `/plugin uninstall xeef@xeef`. Your data in `~/.xeef` stays 
 - **When a session starts** (the `SessionStart` hook), Xeef reports the last weekly review in one line. Once a week, after at least 30 log rows, it starts a new review in the background.
 
 When the usage limit is spent, Xeef skips the judge and logs the skip.
+
+## Plugin suggestions
+
+Xeef ships a small curated catalog of plugins in `catalog.json`. Each entry names the files and phrases that show a session needs it: `.css` and `.tsx` files or "looks AI generated" for a UI plugin, `.rs` files for the Rust language server.
+
+- When the files touched in your project or your recent prompts match an entry you do not have, the judge sees that entry. If it fits the work, the agent ends its reply with the plugin's install command.
+- A plugin installed in any scope counts as one you have. So does a plugin that does the same job as the entry.
+- Xeef offers each plugin once. Whatever you answer, it never offers that plugin again. Offers are recorded in `~/.xeef/state/plugins.json`.
+
+To suggest a plugin for everyone, open a pull request that adds it to `catalog.json`. To add one only for yourself, see `catalog` under [Settings](#settings).
 
 ## Cost and privacy
 
@@ -74,6 +85,15 @@ The weekly review asks a stronger model to rewrite `profile.md` from the log. If
 - `stakes`: `path` is a glob for the project folder. `globs` are relative to that folder, or absolute. In both, `*` also matches `/`. When the last two prompts touch a stakes path, the judge sees that and can suggest a stronger rung.
 - `claude.judges`: tried in order. If one fails, Xeef logs the error and tries the next.
 - `claude.reviewer`: the model for the weekly review.
+- `catalog`: your own plugin entries, in the same shape as `catalog.json`. An entry with the same `name` as a shipped one replaces it. For example:
+
+  ```json
+  "catalog": [
+    { "name": "my-db-tools", "for": "SQL migrations and query review",
+      "signals": { "files": ["*.sql"], "prompts": ["migration"] },
+      "claude": { "id": "my-db-tools@my-marketplace", "install": "/plugin install my-db-tools@my-marketplace" } }
+  ]
+  ```
 
 ## Check it against your own history
 

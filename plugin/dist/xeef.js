@@ -36,6 +36,68 @@ var import_node_child_process = require("node:child_process");
 var fs = __toESM(require("node:fs"));
 var os = __toESM(require("node:os"));
 var path = __toESM(require("node:path"));
+
+// catalog.json
+var catalog_default = [
+  {
+    name: "impeccable",
+    for: "UI design work: layout, typography and visual polish that does not look generated",
+    signals: {
+      files: ["*.css", "*.scss", "*.tsx", "*.jsx", "*.vue", "*.svelte", "*.html"],
+      prompts: ["looks? (ai[- ]generated|generic|templat)", "too templat", "(ugly|bland|boring|cluttered) (ui|design|page|layout)"]
+    },
+    conflicts: ["frontend-design"],
+    claude: { id: "impeccable@impeccable", install: "/plugin marketplace add pbakaus/impeccable, then /plugin install impeccable@impeccable" }
+  },
+  {
+    name: "frontend-design",
+    for: "bold, distinctive front-end design for landing pages and marketing sites",
+    signals: {
+      files: ["*.css", "*.scss", "*.tsx", "*.jsx", "*.vue", "*.svelte", "*.html"],
+      prompts: ["landing page", "marketing (site|page)", "make it (pop|stand out|beautiful)", "more (bold|striking|distinctive)"]
+    },
+    conflicts: ["impeccable"],
+    claude: { id: "frontend-design@claude-plugins-official", install: "/plugin install frontend-design@claude-plugins-official" }
+  },
+  {
+    name: "rust-analyzer-lsp",
+    for: "Rust code: go-to-definition, type and error checks through rust-analyzer (needs rust-analyzer on PATH)",
+    signals: { files: ["*.rs", "*/Cargo.toml"], prompts: [] },
+    claude: { id: "rust-analyzer-lsp@claude-plugins-official", install: "/plugin install rust-analyzer-lsp@claude-plugins-official" }
+  },
+  {
+    name: "prose",
+    for: "clear, plain writing in docs, READMEs, commit messages and chat replies",
+    signals: {
+      files: ["*.md", "*.mdx", "*.rst"],
+      prompts: ["too (wordy|dense)", "too long to read", "plain(er)? (words|english)", "hard to (read|follow)", "(rewrite|clean up) (the )?(docs|readme)"]
+    },
+    claude: {
+      id: "prose@fprochazka-claude-code-plugins",
+      install: "/plugin marketplace add fprochazka/claude-code-plugins, then /plugin install prose@fprochazka-claude-code-plugins"
+    }
+  },
+  {
+    name: "humanizer",
+    for: "rewriting text that sounds AI-written so it reads like a person wrote it",
+    signals: {
+      files: [],
+      prompts: ["(sounds|reads|feels) (like )?(ai|chatgpt|robotic|generated)", "humani[sz]e", "ai[- ](sounding|written|slop)"]
+    },
+    claude: { id: "humanizer@humanizer", install: "/plugin marketplace add blader/humanizer, then /plugin install humanizer@humanizer" }
+  },
+  {
+    name: "ponytail",
+    for: "keeping code minimal: the simplest change that works, no speculative abstractions",
+    signals: {
+      files: [],
+      prompts: ["over-?engineer", "too (complex|complicated|abstract)", "\\bbloat", "(simpler|simplify|less code)", "\\byagni\\b"]
+    },
+    claude: { id: "ponytail@ponytail", install: "/plugin marketplace add DietrichGebert/ponytail, then /plugin install ponytail@ponytail" }
+  }
+];
+
+// src/core.ts
 var DIR = process.env.XEEF_HOME || path.join(os.homedir(), ".xeef");
 var PENDING = path.join(DIR, "pending");
 var STATE = path.join(DIR, "state");
@@ -46,14 +108,16 @@ var CLIP = 700;
 var WINDOW = 6;
 var REVIEW_EVERY = 7 * 86400;
 var REVIEW_MIN_ROWS = 30;
+var section = (e, h2) => e[h2.id];
 var UsageLimit = class extends Error {
 };
 var label = (j) => `${j.harness}:${j.model}`;
-var schema = (h2) => ({ type: "object", required: ["speak", "kind", "note", "to", "reason", "evidence"], properties: {
+var schema = (h2) => ({ type: "object", required: ["speak", "kind", "note", "to", "plugin", "reason", "evidence"], properties: {
   speak: { type: "boolean" },
-  kind: { type: "string", enum: ["none", "misread", "struggle", "stakes", "lighter"] },
+  kind: { type: "string", enum: ["none", "misread", "struggle", "stakes", "lighter", "plugin"] },
   note: { type: "string" },
   to: { type: "string", enum: ["", ...h2.ladder.map((s) => s.name)] },
+  plugin: { type: "string", enum: ["", ...catalog().map((e) => e.name)] },
   reason: { type: "string" },
   evidence: { type: "string" }
 } });
@@ -71,9 +135,14 @@ Speak only for one of these, with evidence from the transcript:
 - stakes: the work now in progress, or clearly about to start, is expensive when wrong (see the profile and
   the stakes paths) and the session is below the rung the profile asks for. to is the rung the work needs.
 - lighter: the session is on a high rung while recent and upcoming work is routine. to is a lower rung that fits it.
+- plugin: the prompt lists plugins the work points at, and the work in the last few prompts is the kind one of them
+  helps with. plugin names it and reason says what in the work shows the fit; to is "". An offer is cheap: each
+  plugin is offered once per user and never again, so the one-in-ten aim below does not apply to it. Stay silent
+  only when the listed plugin does not fit the work itself, such as a matched word used in another sense. When no
+  plugins are listed, never choose this kind. plugin is "" for every other kind.
 Rung order: ${h2.ladder.map((s) => s.name).join(" < ")}. ${h2.rule}
 
-Aim to speak on fewer than one prompt in ten; an earlier correction the assistant has since handled is not a reason. Do not speak because a session is long, because the user is terse, or because a single tool call failed.
+Apart from plugin offers, aim to speak on fewer than one prompt in ten; an earlier correction the assistant has since handled is not a reason. Do not speak because a session is long, because the user is terse, or because a single tool call failed.
 If you spoke recently, speak again only if something new happened. Write note as an instruction to the
 assistant (one or two sentences, naming no command: the command is added for you) and reason as a few words
 for the user saying why. Empty strings when speak=false.`;
@@ -81,7 +150,8 @@ var REVIEW_TASK = `You maintain profile.md in this folder: what a small session 
 decide when to suggest a different model or effort, or a restatement. Read log.jsonl (verdicts, deliveries, and
 outcomes: whether the user changed rung after a suggestion) and the current profile.md. Then rewrite profile.md:
 keep what the outcomes support, drop or soften what they contradict (suggestions the user ignored), add patterns
-you can see. Keep it under 60 lines, plain statements, no history. Finally write review-note.txt: one sentence
+you can see. A plugin the log shows was suggested over a week ago with no install outcome is a no: note it. Keep it
+under 60 lines, plain statements, no history. Finally write review-note.txt: one sentence
 saying what changed and why, for the user. Change no other file.`;
 var FRICTION = new RegExp([
   "not what (i|you) (meant|mean|asked|want)",
@@ -153,6 +223,10 @@ function fnmatch(name, pat) {
 }
 var rel = (p, cwd) => path.relative(cwd, p) || ".";
 var config = () => jread(path.join(DIR, "config.json"), {});
+function catalog() {
+  const mine = config().catalog || [], names = new Set(mine.map((e) => e.name));
+  return [...catalog_default.filter((e) => !names.has(e.name)), ...mine];
+}
 function stakesGlobs(cwd) {
   return (config().stakes || []).filter((r) => fnmatch(cwd, expand(r.path))).flatMap((r) => r.globs.map((g) => g.startsWith("/") || g.startsWith("~") ? expand(g) : path.join(cwd, g)));
 }
@@ -194,7 +268,7 @@ function signals(ev, prompt, globs) {
   if (rework >= 6) found.push(`one file edited ${rework} times`);
   const touched = recent.slice(-2).flatMap((t) => t.paths);
   const stakes = [...new Set(globs.filter((g) => touched.some((p) => fnmatch(p, g))))].sort();
-  return { found, stakes, rung };
+  return { found, stakes, rung, touched, texts: texts.filter(Boolean) };
 }
 function tail(ev) {
   const lines = [];
@@ -207,10 +281,45 @@ function tail(ev) {
   const from = starts.length >= TAIL_PROMPTS ? starts[starts.length - TAIL_PROMPTS] : 0;
   return lines.slice(from).map(([who, s]) => `${who}: ${clip(s, CLIP)}${longer(s, CLIP) ? "\u2026" : ""}`).join("\n");
 }
-function judgePrompt(h2, ev, cwd, sid) {
+var OFFERED = path.join(STATE, "plugins.json");
+var matches = (re, s) => {
+  try {
+    return new RegExp(re, "i").test(s);
+  } catch {
+    return false;
+  }
+};
+function candidates(h2, cwd, sid, touched, texts, record) {
+  const offered = jread(OFFERED, {});
+  const hits = [];
+  for (const e of catalog()) {
+    const s = section(e, h2);
+    if (!s || offered[e.name]) continue;
+    const file = touched.find((p) => !rel(p, cwd).startsWith("..") && e.signals.files.some((g) => fnmatch(path.basename(p), g) || fnmatch(p, g)));
+    const said = texts.find((t) => e.signals.prompts.some((re) => matches(re, t)));
+    if (file || said) hits.push({ ...e, install: s.install, why: file ? `the session touched ${rel(file, cwd)}` : `a prompt said "${clip(said.trim(), 80)}"` });
+  }
+  const waiting = record ? Object.keys(offered).filter((n) => offered[n].installed === void 0 && Date.now() - new Date(offered[n].at).getTime() < REVIEW_EVERY * 1e3) : [];
+  if (!hits.length && !waiting.length) return [];
+  const have = h2.installed();
+  if (!have) return [];
+  const names = new Set(have.map((id2) => id2.split("@")[0]));
+  const has = (e) => names.has(e.name) || have.includes(section(e, h2)?.id ?? "");
+  const later = waiting.filter((n) => names.has(n));
+  if (later.length) {
+    for (const n of later) {
+      log({ event: "outcome", sid, kind: "plugin", plugin: n, changed: true });
+      offered[n].installed = true;
+    }
+    jwrite(OFFERED, offered);
+  }
+  return hits.filter((e) => !has(e) && !(e.conflicts || []).some((c) => names.has(c)));
+}
+function judgePrompt(h2, ev, cwd, sid, record = false) {
   const n = prompts(ev);
   const globs = stakesGlobs(cwd);
-  let { found, stakes, rung } = signals(ev, "", globs);
+  let { found, stakes, rung, touched, texts } = signals(ev, "", globs);
+  const cands = candidates(h2, cwd, sid, touched, texts, record);
   if (!rung[0]) rung = h2.savedRung();
   const st = jread(path.join(STATE, `${sid}.json`), {});
   const spoke = st.spoke_at !== void 0 ? `You last spoke ${n - st.spoke_at} prompt(s) ago: ${st.kind}.` : "You have not spoken yet.";
@@ -224,21 +333,28 @@ Stakes paths touched in the last two prompts: ${stakes.map((s) => rel(s, cwd)).j
 Current rung: ${rung[0] ?? "unknown"} at ${rung[1] || "default"} effort
 Mechanical signals: ${found.join("; ") || "none"}
 ${spoke}
-
+` + (cands.length ? `Plugins the work points at, which the user does not have:
+${cands.map((c) => `- ${c.name}: ${c.for} (${c.why})`).join("\n")}
+` : "") + `
 Transcript tail (prompt ${n} is the latest):
 ${tail(ev)}`;
-  return { n, rung, st, prompt };
+  return { n, rung, st, prompt, cands };
 }
 var HEAD = { struggle: "This might go better with", stakes: "This one is worth", lighter: "This looks routine enough for" };
 var blank = (s) => /^[\s"'`\u2018\u2019\u201c\u201d.]*$/.test(s ?? "");
-function settle(h2, v, rung) {
+function settle(h2, v, rung, cands) {
+  const why = blank(v.reason) ? "" : `: ${v.reason.trim().replace(/[.\s]+$/, "")}`;
+  if (v.speak && v.kind === "plugin") {
+    const c = cands.find((x) => x.name === v.plugin);
+    if (!c) return { line: "", dropped: `plugin "${v.plugin}" is not a candidate for this session` };
+    return { line: `This work could use the ${c.name} plugin (${c.for})${why}. To add it: ${c.install}.` };
+  }
   if (!v.speak || !HEAD[v.kind]) return { line: "" };
   const to = h2.ladder.find((s) => s.name === v.to);
   const cur = h2.place(rung), next = to && h2.place([to.model, to.effort]);
   if (!to || next == null) return { line: "", dropped: `no rung "${v.to}" on the ladder` };
   if (cur === null) return { line: "", dropped: `current rung ${rung.join(" ")} is not on the ladder` };
   if (v.kind === "lighter" ? next >= cur : next <= cur) return { line: "", dropped: `${v.kind}: ${to.name} points the wrong way` };
-  const why = blank(v.reason) ? "" : `: ${v.reason.trim().replace(/[.\s]+$/, "")}`;
   return { line: `${HEAD[v.kind]} ${h2.command(rung, to)}${why}.` };
 }
 function stop(h2, inp) {
@@ -250,7 +366,7 @@ function judge(h2, inp) {
   const sid = inp.session_id || "x", cwd = inp.cwd || process.cwd();
   const { events: ev } = h2.read(inp.transcript_path || "");
   if (prompts(ev) < 2) return;
-  const { n, rung, st, prompt } = judgePrompt(h2, ev, cwd, sid);
+  const { n, rung, st, prompt, cands } = judgePrompt(h2, ev, cwd, sid, true);
   if (st.delivered_rung && !st.outcome_logged) {
     const changed = JSON.stringify(st.delivered_rung) !== JSON.stringify(rung);
     log({ event: "outcome", sid, kind: st.kind, before: st.delivered_rung, after: rung, changed });
@@ -275,7 +391,7 @@ function judge(h2, inp) {
       continue;
     }
     const { v, secs, cost } = r;
-    const s = settle(h2, v, rung);
+    const s = settle(h2, v, rung, cands);
     log({ event: "verdict", sid, cwd, prompt_n: n, rung, judge: label(j), secs, cost, ...v, ...s });
     if (v.speak && v.kind !== "none" && !s.dropped) jwrite(path.join(PENDING, `${sid}.json`), { ...v, ...s, prompt_n: n, rung });
     return;
@@ -291,6 +407,10 @@ function inject(h2, inp) {
   if (n - v.prompt_n > 2) return null;
   jwrite(path.join(STATE, `${sid}.json`), { spoke_at: n, kind: v.kind, delivered_rung: v.rung });
   log({ event: "delivered", sid, kind: v.kind, line: v.line });
+  if (v.kind === "plugin" && v.plugin) {
+    const offered = jread(OFFERED, {});
+    jwrite(OFFERED, { ...offered, [v.plugin]: { at: now(), sid } });
+  }
   let ctx = `Session judge (the user's own hook, Xeef, which reviewed the last exchanges with a small model): ${v.note}`;
   if (v.line) ctx += ` If you agree after reading the user's new prompt, end your reply with one line: "${v.line}"`;
   return ctx + " If it plainly does not fit the new prompt, ignore it.";
@@ -359,7 +479,7 @@ function backtest(h2, folder, k, dry) {
   const sample = points.slice(0, Math.min(k, points.length));
   let spoke = 0;
   for (const p of sample) {
-    const { prompt, rung } = judgePrompt(h2, p.ev.slice(0, p.i), p.cwd, "backtest");
+    const { prompt, rung, cands } = judgePrompt(h2, p.ev.slice(0, p.i), p.cwd, "backtest");
     const head = { session: p.file.slice(0, 8), at: p.at, next_prompt: clip(p.ev[p.i].text, 100) };
     if (dry) {
       console.log(JSON.stringify({ ...head, prompt }));
@@ -369,7 +489,7 @@ function backtest(h2, folder, k, dry) {
     try {
       const { v, secs, cost } = ask(h2, j, prompt);
       spoke += Number(v.speak);
-      console.log(JSON.stringify({ ...head, judge: label(j), secs, cost, rung, speak: v.speak, kind: v.kind, to: v.to, ...settle(h2, v, rung), evidence: v.evidence }));
+      console.log(JSON.stringify({ ...head, judge: label(j), secs, cost, rung, speak: v.speak, kind: v.kind, to: v.to, plugin: v.plugin, ...settle(h2, v, rung, cands), evidence: v.evidence }));
     } catch (e) {
       console.log(JSON.stringify({ ...head, error: String(e).slice(0, 300) }));
     }
@@ -521,6 +641,14 @@ function review2(model, task, cwd) {
   ], { cwd, encoding: "utf8", timeout: 9e5, env: inner });
   return { rc: r.status, out: r.stdout || r.error?.message || "" };
 }
+function installed() {
+  const r = (0, import_node_child_process2.spawnSync)("claude", ["plugin", "list", "--json"], { cwd: os2.homedir(), encoding: "utf8", timeout: 15e3, env: inner });
+  try {
+    return JSON.parse(r.stdout).map((p) => p.id);
+  } catch {
+    return null;
+  }
+}
 var claude = {
   id: "claude",
   name: "Claude Code",
@@ -533,7 +661,8 @@ var claude = {
   read,
   savedRung,
   ask: ask2,
-  review: review2
+  review: review2,
+  installed
 };
 
 // src/cli.ts

@@ -113,6 +113,13 @@ function review(model: string, task: string, cwd: string) {
   return { rc: r.status, out: r.stdout || r.error?.message || "" };
 }
 
+/** Plugin ids in every scope, from the CLI, so user, project and local installs all count. The list is the same from
+ * any folder, so it runs from home: a session's folder may have moved since. */
+function installed(): string[] | null {
+  const r = spawnSync("claude", ["plugin", "list", "--json"], { cwd: os.homedir(), encoding: "utf8", timeout: 15_000, env: inner });
+  try { return (JSON.parse(r.stdout) as { id: string }[]).map((p) => p.id); } catch { return null; }
+}
+
 export const claude: Harness = {
   id: "claude",
   name: "Claude Code",
@@ -121,5 +128,5 @@ export const claude: Harness = {
   place, command,
   judge: "haiku",
   reviewer: "sonnet",
-  read, savedRung, ask, review,
+  read, savedRung, ask, review, installed,
 };

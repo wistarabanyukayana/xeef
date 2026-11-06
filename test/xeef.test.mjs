@@ -306,3 +306,65 @@ test("a held lock stops a second review", () => {
   t.run("review-run");
   assert.equal(t.calls(), "");
 });
+
+// ---- plugin suggestions --------------------------------------------------------------------------
+
+/** A fake `claude` that lists the given plugin ids and answers every judge call with the verdict. */
+const pluginFake = (t, ids, v) => t.fake(`case "$*" in "plugin list --json") echo '${JSON.stringify(ids.map((id) => ({ id })))}'; exit 0;; esac\necho '${verdict(v)}'`);
+const at = (t, text) => ({ ...u(text), cwd: t.home });
+const IMPECCABLE = { speak: true, kind: "plugin", plugin: "impeccable", note: "Offer the plugin.", reason: "the header restyle is UI work" };
+
+function cssSession(t) {
+  return t.transcript([at(t, "restyle the header"), a("On it."), edit(path.join(t.home, "src", "app.css")), at(t, "now the footer"), a("Done.")]);
+}
+const judgeHere = (t, f) => t.run("judge", { session_id: "s", cwd: t.home, transcript_path: f });
+
+test("an edited .css file makes impeccable a candidate, offered once with its install command", () => {
+  const t = setup(); pluginFake(t, ["ponytail@ponytail"], IMPECCABLE);
+  const f = cssSession(t);
+  judgeHere(t, f);
+  assert.equal(t.last().line, "This work could use the impeccable plugin (UI design work: layout, typography and visual polish that does not look generated): "
+    + "the header restyle is UI work. To add it: /plugin marketplace add pbakaus/impeccable, then /plugin install impeccable@impeccable.");
+  assert.match(t.run("inject", { session_id: "s", transcript_path: f }), /end your reply with one line: \\"This work could use the impeccable plugin/);
+  assert.ok(JSON.parse(fs.readFileSync(path.join(t.data, "state", "plugins.json"), "utf8")).impeccable);
+  judgeHere(t, f); // offered already: no longer a candidate, so the same verdict is dropped
+  assert.match(t.last().dropped, /"impeccable" is not a candidate/);
+  assert.equal(fs.existsSync(path.join(t.data, "pending", "s.json")), false);
+});
+
+test("a plugin the user has, or one that conflicts with it, is not a candidate", () => {
+  for (const ids of [["impeccable@impeccable"], ["frontend-design@claude-plugins-official"]]) {
+    const t = setup(); pluginFake(t, ids, IMPECCABLE);
+    judgeHere(t, cssSession(t));
+    assert.match(t.last().dropped, /not a candidate/, ids[0]);
+  }
+});
+
+test("a plugin installed after the offer logs the outcome once", () => {
+  const t = setup(); pluginFake(t, ["impeccable@impeccable"], {});
+  fs.mkdirSync(path.join(t.data, "state"), { recursive: true });
+  fs.writeFileSync(path.join(t.data, "state", "plugins.json"), JSON.stringify({ impeccable: { at: new Date().toISOString(), sid: "old" } }));
+  const f = t.transcript([at(t, "1"), a("a"), at(t, "2"), a("b")]);
+  judgeHere(t, f); judgeHere(t, f);
+  assert.deepEqual(t.rows().filter((r) => r.event === "outcome").map((r) => [r.kind, r.plugin, r.changed]), [["plugin", "impeccable", true]]);
+});
+
+test("a prompt pattern puts the plugin in the judge's prompt; a user entry replaces the shipped one", () => {
+  const t = setup(); pluginFake(t, [], {});
+  const rows = [at(t, "1"), a("a"), at(t, "2"), a("b"), at(t, "this is over-engineered"), a("c"), at(t, "4"), at(t, "5")];
+  assert.match(dryPrompt(t, rows), /\nPlugins the work points at, which the user does not have:\n- ponytail: keeping code minimal: .* \(a prompt said "this is over-engineered"\)\n/);
+  t.config({ catalog: [{ name: "ponytail", for: "my own words", signals: { files: [], prompts: ["over-?engineer"] }, claude: { id: "ponytail@ponytail", install: "x" } }] });
+  assert.match(dryPrompt(t, rows), /\n- ponytail: my own words \(a prompt said/);
+});
+
+test("without a matching entry the prompt has no plugin section and the plugin list is not read", () => {
+  const t = setup(); pluginFake(t, [], {});
+  assert.doesNotMatch(dryPrompt(t, [at(t, "1"), a("a"), at(t, "2"), a("b"), at(t, "3"), a("c"), at(t, "4"), at(t, "5")]), /Plugins the work/);
+  assert.doesNotMatch(t.calls(), /plugin list/);
+});
+
+test("a matching file outside the session's folder is not a signal", () => {
+  const t = setup(); pluginFake(t, [], {});
+  const p = dryPrompt(t, [at(t, "1"), a("a"), at(t, "2"), a("b"), at(t, "3"), a("c"), at(t, "4"), edit("/elsewhere/.claude/plans/plan.md"), at(t, "5")]);
+  assert.doesNotMatch(p, /Plugins the work/);
+});
