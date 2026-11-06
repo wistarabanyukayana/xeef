@@ -71,7 +71,7 @@ test("committed dist/xeef.js matches a fresh build of src", () => {
   assert.ok(fs.readFileSync(out, "utf8") === fs.readFileSync(XEEF, "utf8"), "dist/xeef.js is stale: run npm run build");
 });
 
-// ---- the five cases of the reference test (scratchpad/test_judge.py) ----------------------------
+// ---- the five cases of the reference hook's own test --------------------------------------------
 
 function usageCases(name, grace, normal) {
   test(`${name}: a usage-limit note in the last turn skips the judge`, () => {

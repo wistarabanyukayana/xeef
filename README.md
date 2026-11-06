@@ -19,12 +19,13 @@ Claude Code is supported today. Codex, agy (Antigravity CLI) and opencode will f
 
 The repository is a Claude Code plugin marketplace. The built hook file is committed, so installing runs no build step.
 
-1. Get the repository: `git clone <repo-url> ~/xeef`.
-2. In Claude Code, run `/plugin marketplace add ~/xeef`.
-3. Run `/plugin install xeef@xeef`.
-4. Start a new Claude Code session. Hooks load when a session starts.
+1. In Claude Code, run `/plugin marketplace add wistarabanyukayana/xeef`.
+2. Run `/plugin install xeef@xeef`.
+3. Start a new Claude Code session. Hooks load when a session starts.
 
-From a shell, steps 2 and 3 are `claude plugin marketplace add ~/xeef` and `claude plugin install xeef@xeef`.
+From a shell, the first two steps are `claude plugin marketplace add wistarabanyukayana/xeef` and `claude plugin install xeef@xeef`.
+
+To update, run `claude plugin marketplace update xeef`, then `claude plugin update xeef@xeef`.
 
 To remove Xeef, run `/plugin uninstall xeef@xeef`. Your data in `~/.xeef` stays until you delete it.
 
@@ -76,9 +77,10 @@ The weekly review asks a stronger model to rewrite `profile.md` from the log. If
 
 ## Check it against your own history
 
-`backtest` judges sampled points from your past transcripts and prints each verdict. It reads `~/.xeef/profile.md` and `config.json`, and costs one judge run per point:
+`backtest` judges sampled points from your past transcripts and prints each verdict. It reads `~/.xeef/profile.md` and `config.json`, and costs one judge run per point. Run it from a clone of this repository:
 
 ```sh
+git clone https://github.com/wistarabanyukayana/xeef ~/xeef
 node ~/xeef/dist/xeef.js claude backtest ~/.claude/projects/<project-folder> 20
 ```
 
