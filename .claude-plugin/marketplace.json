@@ -1,0 +1,9 @@
+{
+  "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
+  "name": "xeef",
+  "description": "Xeef, a session judge for coding agents.",
+  "owner": { "name": "Wistara Banyu Kayana" },
+  "plugins": [
+    { "name": "xeef", "description": "Session judge: suggests a restatement or a model change when the session needs one.", "source": "./" }
+  ]
+}

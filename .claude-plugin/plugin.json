@@ -1,0 +1,7 @@
+{
+  "name": "xeef",
+  "version": "0.1.0",
+  "description": "After each turn a cheap model reads the session; when it matters, the agent suggests a restatement or a model change. Suggest-only.",
+  "author": { "name": "Wistara Banyu Kayana" },
+  "license": "MIT"
+}

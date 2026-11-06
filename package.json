@@ -1,0 +1,23 @@
+{
+  "name": "xeef",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Watches a coding-agent session and tells the agent when to suggest a restatement or a model change.",
+  "license": "MIT",
+  "engines": {
+    "node": ">=18"
+  },
+  "bin": {
+    "xeef": "dist/xeef.js"
+  },
+  "scripts": {
+    "build": "esbuild src/cli.ts --bundle --platform=node --target=node18 --outfile=dist/xeef.js",
+    "typecheck": "tsc --noEmit",
+    "test": "npm run typecheck && node --test test/xeef.test.mjs"
+  },
+  "devDependencies": {
+    "@types/node": "^18.19.130",
+    "esbuild": "^0.28.2",
+    "typescript": "^7.0.2"
+  }
+}
