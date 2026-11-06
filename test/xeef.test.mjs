@@ -1,4 +1,4 @@
-// Runs the shipped dist/xeef.js against a fake `claude` on PATH. Each test gets its own XEEF_HOME and HOME.
+// Runs the shipped plugin/dist/xeef.js against a fake `claude` on PATH. Each test gets its own XEEF_HOME and HOME.
 // Set XEEF_TEST_TRANSCRIPT to a real Claude Code transcript that contains a usage-limit note to also run the
 // usage-limit cases on it.
 import { test } from "node:test";
@@ -10,7 +10,7 @@ import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
-const XEEF = path.join(ROOT, "dist", "xeef.js");
+const XEEF = path.join(ROOT, "plugin", "dist", "xeef.js");
 const OK = '{"structured_output":{"speak":false,"kind":"none","note":"","line":"","evidence":"x"},"total_cost_usd":0.001}';
 const SPEAK = '{"structured_output":{"speak":true,"kind":"stakes","note":"Suggest more effort.","line":"This one is worth /effort high: flight code.","evidence":"x"}}';
 
@@ -64,11 +64,11 @@ async function until(check, ms = 10_000) {
 
 // ---- the build -----------------------------------------------------------------------------------
 
-test("committed dist/xeef.js matches a fresh build of src", () => {
+test("committed plugin/dist/xeef.js matches a fresh build of src", () => {
   const out = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "xeef-build-")), "xeef.js");
   const r = spawnSync(path.join(ROOT, "node_modules", ".bin", "esbuild"), ["src/cli.ts", "--bundle", "--platform=node", "--target=node18", `--outfile=${out}`, "--log-level=warning"], { cwd: ROOT, encoding: "utf8" });
   assert.equal(r.status, 0, r.stderr);
-  assert.ok(fs.readFileSync(out, "utf8") === fs.readFileSync(XEEF, "utf8"), "dist/xeef.js is stale: run npm run build");
+  assert.ok(fs.readFileSync(out, "utf8") === fs.readFileSync(XEEF, "utf8"), "plugin/dist/xeef.js is stale: run npm run build");
 });
 
 // ---- the five cases of the reference hook's own test --------------------------------------------

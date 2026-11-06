@@ -17,7 +17,7 @@ Claude Code is supported today. Codex, agy (Antigravity CLI) and opencode will f
 
 ## Install
 
-The repository is a Claude Code plugin marketplace. The built hook file is committed, so installing runs no build step.
+The repository is a Claude Code plugin marketplace, and the plugin itself is the `plugin/` folder. The built hook file is committed there, so installing runs no build step and no `npm install`.
 
 1. In Claude Code, run `/plugin marketplace add wistarabanyukayana/xeef`.
 2. Run `/plugin install xeef@xeef`.
@@ -81,7 +81,7 @@ The weekly review asks a stronger model to rewrite `profile.md` from the log. If
 
 ```sh
 git clone https://github.com/wistarabanyukayana/xeef ~/xeef
-node ~/xeef/dist/xeef.js claude backtest ~/.claude/projects/<project-folder> 20
+node ~/xeef/plugin/dist/xeef.js claude backtest ~/.claude/projects/<project-folder> 20
 ```
 
 Add `--dry` to print the prompts the judge would see, without calling a model.
@@ -90,13 +90,13 @@ Add `--dry` to print the prompts the judge would see, without calling a model.
 
 ```sh
 npm ci
-npm test         # typecheck, then the tests against the committed dist/xeef.js
-npm run build    # rebuild dist/xeef.js; commit it with the source change
+npm test         # typecheck, then the tests against the committed plugin/dist/xeef.js
+npm run build    # rebuild plugin/dist/xeef.js; commit it with the source change
 ```
 
-The tests use a fake `claude` on `PATH`, so they make no model calls. One test fails while `dist/xeef.js` is older than the source.
+The tests use a fake `claude` on `PATH`, so they make no model calls. One test fails while `plugin/dist/xeef.js` is older than the source.
 
-To try a change in a real session without installing it, run `claude --plugin-dir ~/xeef`. Set `XEEF_HOME` to a scratch folder to keep the test run out of your log.
+To try a change in a real session without installing it, run `claude --plugin-dir ~/xeef/plugin`. Set `XEEF_HOME` to a scratch folder to keep the test run out of your log.
 
 The design, the rulings behind it and the harness facts it relies on are in [docs/spec.md](docs/spec.md).
 
