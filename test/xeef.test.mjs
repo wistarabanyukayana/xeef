@@ -11,13 +11,14 @@ import { fileURLToPath } from "node:url";
 
 const ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const XEEF = path.join(ROOT, "plugin", "dist", "xeef.js");
-const OK = '{"structured_output":{"speak":false,"kind":"none","note":"","line":"","evidence":"x"},"total_cost_usd":0.001}';
-const SPEAK = '{"structured_output":{"speak":true,"kind":"stakes","note":"Suggest more effort.","line":"This one is worth /effort high: flight code.","evidence":"x"}}';
+const verdict = (v) => JSON.stringify({ structured_output: { speak: false, kind: "none", note: "", to: "", reason: "", evidence: "x", ...v }, total_cost_usd: 0.001 });
+const OK = verdict({});
+const SPEAK = verdict({ speak: true, kind: "stakes", note: "Suggest more effort.", to: "opus high", reason: "flight code" });
 
 // ---- fixtures ------------------------------------------------------------------------------------
 
 const u = (text) => ({ type: "user", cwd: "/w/proj", message: { role: "user", content: text } });
-const a = (text, effort = "medium") => ({ type: "assistant", requestedModel: "claude-opus-5-5", perTurnEffort: effort, message: { content: [{ type: "text", text }] } });
+const a = (text, effort = "medium", model = "claude-opus-5-5") => ({ type: "assistant", requestedModel: model, perTurnEffort: effort, message: { content: [{ type: "text", text }] } });
 const edit = (file) => ({ type: "assistant", requestedModel: "claude-opus-5-5", perTurnEffort: "medium", message: { content: [{ type: "tool_use", id: file, name: "Edit", input: { file_path: file } }] } });
 const blob = (file) => ({ type: "api-request-blob", message: { role: "user", content: [{ type: "tool_use", id: file, name: "Edit", input: { file_path: file } }] } });
 const note = { type: "user", isMeta: true, usageLimitNote: "wrap_up", message: { content: "[Usage limit reached; a short grace allowance remains]" } };
@@ -197,6 +198,46 @@ test("a verdict judged more than two prompts ago is dropped", () => {
   const f = t.transcript([u("1"), a("a"), u("2"), a("b"), u("3"), a("c"), u("4")]);
   assert.equal(t.run("inject", { session_id: "s", transcript_path: f }), "");
   assert.equal(fs.existsSync(path.join(t.data, "pending", "s.json")), false);
+});
+
+// ---- the rung the judge picks becomes a command Xeef writes ----------------------------------
+
+const RUNGS = [
+  // [current model, effort, kind, judge's rung, expected line or null when dropped]
+  ["claude-opus-5-5", "medium", "stakes", "opus high", "This one is worth /effort high: flight code."],
+  ["claude-sonnet-5-5", "high", "struggle", "opus medium", "This might go better with /model opus then /effort medium: flight code."],
+  ["claude-opus-5-5", "xhigh", "struggle", "fable", "This might go better with /model claude-fable-5-1: flight code."],
+  ["claude-opus-5-5", "high", "lighter", "opus medium", "This looks routine enough for /effort medium: flight code."],
+  ["claude-opus-5-5", "high", "lighter", "sonnet high", "This looks routine enough for /model sonnet then /effort high: flight code."],
+  ["claude-opus-5-5", "medium", "lighter", "opus high", null], // lighter that points up
+  ["claude-opus-5-5", "high", "stakes", "opus high", null], // already there
+  ["claude-opus-5-5", "high", "stakes", "", null], // no rung
+];
+for (const [model, effort, kind, to, line] of RUNGS) {
+  test(`${kind} from ${model} ${effort} to "${to}" ${line ? "suggests a command" : "is dropped"}`, () => {
+    const t = setup(); t.fake(`echo '${verdict({ speak: true, kind, note: "n", to, reason: "flight code." })}'`);
+    t.judge(t.transcript([u("1"), a("a", effort, model), u("2"), a("b", effort, model)]));
+    const r = t.last();
+    assert.equal(r.event, "verdict");
+    assert.equal(r.line, line ?? "");
+    assert.equal(!!r.dropped, !line);
+    assert.equal(fs.existsSync(path.join(t.data, "pending", "s.json")), !!line);
+  });
+}
+
+test("a restatement carries no command, even when the judge sends a stray quote pair", () => {
+  const t = setup(); t.fake(`echo '${verdict({ speak: true, kind: "misread", note: "Restate the request first.", to: "opus high", reason: '""' })}'`);
+  const f = t.transcript(NORMAL);
+  t.judge(f);
+  const ctx = JSON.parse(t.run("inject", { session_id: "s", transcript_path: f })).hookSpecificOutput.additionalContext;
+  assert.match(ctx, /Restate the request first\. If it plainly does not fit/);
+  assert.doesNotMatch(ctx, /end your reply/);
+});
+
+test("a blank reason leaves just the command", () => {
+  const t = setup(); t.fake(`echo '${verdict({ speak: true, kind: "stakes", note: "n", to: "opus high", reason: '""' })}'`);
+  t.judge(t.transcript(NORMAL));
+  assert.equal(t.last().line, "This one is worth /effort high.");
 });
 
 // ---- signals and prompt ------------------------------------------------------------------------

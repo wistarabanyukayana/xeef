@@ -49,13 +49,14 @@ var REVIEW_MIN_ROWS = 30;
 var UsageLimit = class extends Error {
 };
 var label = (j) => `${j.harness}:${j.model}`;
-var SCHEMA = { type: "object", required: ["speak", "kind", "note", "line", "evidence"], properties: {
+var schema = (h2) => ({ type: "object", required: ["speak", "kind", "note", "to", "reason", "evidence"], properties: {
   speak: { type: "boolean" },
   kind: { type: "string", enum: ["none", "misread", "struggle", "stakes", "lighter"] },
   note: { type: "string" },
-  line: { type: "string" },
+  to: { type: "string", enum: ["", ...h2.ladder.map((s) => s.name)] },
+  reason: { type: "string" },
   evidence: { type: "string" }
-} };
+} });
 var system = (h2) => `You watch a coding session between a user and an AI assistant (${h2.name}) and decide whether the
 assistant should tell the user something about how the session is set up. You never talk to the user; your
 verdict is handed to the assistant before the user's next prompt. Most of the time the answer is speak=false.
@@ -63,20 +64,19 @@ verdict is handed to the assistant before the user's next prompt. Most of the ti
 Speak only for one of these, with evidence from the transcript:
 - misread: the latest one or two user prompts correct the assistant's reading of the request ("not what I
   meant", repeating themselves, re-explaining), and the assistant's last reply did not already restate or fix
-  it. note tells the assistant to restate the request in one sentence before acting; line is "" (the assistant
+  it. note tells the assistant to restate the request in one sentence before acting; to is "" (the assistant
   writes the restatement itself, you do not).
 - struggle: the work is going in circles (same fix retried, errors repeating, the user frustrated) and a
-  stronger rung would likely help. line suggests the next rung.
+  stronger rung would likely help. to is the next rung up.
 - stakes: the work now in progress, or clearly about to start, is expensive when wrong (see the profile and
-  the stakes paths) and the session is below the rung the profile asks for. line suggests the next rung.
-- lighter: the session is on a high rung while recent and upcoming work is routine. line suggests stepping down.
-Rung order: ${h2.ladder.join(" < ")}. ${h2.rule}
-Commands: ${h2.commands}.
+  the stakes paths) and the session is below the rung the profile asks for. to is the rung the work needs.
+- lighter: the session is on a high rung while recent and upcoming work is routine. to is a lower rung that fits it.
+Rung order: ${h2.ladder.map((s) => s.name).join(" < ")}. ${h2.rule}
 
 Aim to speak on fewer than one prompt in ten; an earlier correction the assistant has since handled is not a reason. Do not speak because a session is long, because the user is terse, or because a single tool call failed.
 If you spoke recently, speak again only if something new happened. Write note as an instruction to the
-assistant (one or two sentences) and line as the one sentence the assistant should end its reply with,
-addressed to the user, naming the command and the reason in a few words. Empty strings when speak=false.`;
+assistant (one or two sentences, naming no command: the command is added for you) and reason as a few words
+for the user saying why. Empty strings when speak=false.`;
 var REVIEW_TASK = `You maintain profile.md in this folder: what a small session judge should know about this user to
 decide when to suggest a different model or effort, or a restatement. Read log.jsonl (verdicts, deliveries, and
 outcomes: whether the user changed rung after a suggestion) and the current profile.md. Then rewrite profile.md:
@@ -161,7 +161,7 @@ var judgesOf = (h2) => own(h2).judges || [{ harness: h2.id, model: h2.judge }];
 var reviewerOf = (h2) => own(h2).reviewer || { harness: h2.id, model: h2.reviewer };
 function ask(h2, j, prompt) {
   if (j.harness !== h2.id) throw new Error(`judge harness "${j.harness}" is not built yet`);
-  return h2.ask(j.model, system(h2), prompt, SCHEMA);
+  return h2.ask(j.model, system(h2), prompt, schema(h2));
 }
 var prompts = (ev) => ev.filter((e) => e.kind === "user").length;
 function signals(ev, prompt, globs) {
@@ -229,6 +229,18 @@ Transcript tail (prompt ${n} is the latest):
 ${tail(ev)}`;
   return { n, rung, st, prompt };
 }
+var HEAD = { struggle: "This might go better with", stakes: "This one is worth", lighter: "This looks routine enough for" };
+var blank = (s) => /^[\s"'`\u2018\u2019\u201c\u201d.]*$/.test(s ?? "");
+function settle(h2, v, rung) {
+  if (!v.speak || !HEAD[v.kind]) return { line: "" };
+  const to = h2.ladder.find((s) => s.name === v.to);
+  const cur = h2.place(rung), next = to && h2.place([to.model, to.effort]);
+  if (!to || next == null) return { line: "", dropped: `no rung "${v.to}" on the ladder` };
+  if (cur === null) return { line: "", dropped: `current rung ${rung.join(" ")} is not on the ladder` };
+  if (v.kind === "lighter" ? next >= cur : next <= cur) return { line: "", dropped: `${v.kind}: ${to.name} points the wrong way` };
+  const why = blank(v.reason) ? "" : `: ${v.reason.trim().replace(/[.\s]+$/, "")}`;
+  return { line: `${HEAD[v.kind]} ${h2.command(rung, to)}${why}.` };
+}
 function stop(h2, inp) {
   const args = [process.argv[1], h2.id, "judge", JSON.stringify(inp)];
   fs.mkdirSync(DIR, { recursive: true });
@@ -263,8 +275,9 @@ function judge(h2, inp) {
       continue;
     }
     const { v, secs, cost } = r;
-    log({ event: "verdict", sid, cwd, prompt_n: n, rung, judge: label(j), secs, cost, ...v });
-    if (v.speak && v.kind !== "none") jwrite(path.join(PENDING, `${sid}.json`), { ...v, prompt_n: n, rung });
+    const s = settle(h2, v, rung);
+    log({ event: "verdict", sid, cwd, prompt_n: n, rung, judge: label(j), secs, cost, ...v, ...s });
+    if (v.speak && v.kind !== "none" && !s.dropped) jwrite(path.join(PENDING, `${sid}.json`), { ...v, ...s, prompt_n: n, rung });
     return;
   }
 }
@@ -346,7 +359,7 @@ function backtest(h2, folder, k, dry) {
   const sample = points.slice(0, Math.min(k, points.length));
   let spoke = 0;
   for (const p of sample) {
-    const { prompt } = judgePrompt(h2, p.ev.slice(0, p.i), p.cwd, "backtest");
+    const { prompt, rung } = judgePrompt(h2, p.ev.slice(0, p.i), p.cwd, "backtest");
     const head = { session: p.file.slice(0, 8), at: p.at, next_prompt: clip(p.ev[p.i].text, 100) };
     if (dry) {
       console.log(JSON.stringify({ ...head, prompt }));
@@ -356,7 +369,7 @@ function backtest(h2, folder, k, dry) {
     try {
       const { v, secs, cost } = ask(h2, j, prompt);
       spoke += Number(v.speak);
-      console.log(JSON.stringify({ ...head, judge: label(j), secs, cost, speak: v.speak, kind: v.kind, line: v.line, evidence: v.evidence }));
+      console.log(JSON.stringify({ ...head, judge: label(j), secs, cost, rung, speak: v.speak, kind: v.kind, to: v.to, ...settle(h2, v, rung), evidence: v.evidence }));
     } catch (e) {
       console.log(JSON.stringify({ ...head, error: String(e).slice(0, 300) }));
     }
@@ -369,6 +382,27 @@ var SKIP = ["<command-", "<local-command", "<system-reminder", "<task-notificati
 var EDITS = ["Edit", "Write", "MultiEdit"];
 var NO_HOOKS = JSON.stringify({ disableAllHooks: true });
 var ALIASES = { opus: "claude-opus-5-5", sonnet: "claude-sonnet-5-5" };
+var FAMILIES = ["haiku", "sonnet", "opus", "fable"];
+var EFFORTS = ["low", "medium", "high", "xhigh", "max"];
+var ARG = { haiku: "haiku", sonnet: "sonnet", opus: "opus", fable: "claude-fable-5-1" };
+var step = (name) => {
+  const [model, effort = null] = name.split(" ");
+  return { name, model, effort };
+};
+var family = (model) => FAMILIES.find((f) => (model || "").includes(f));
+var hasEffort = (f) => f === "sonnet" || f === "opus";
+var effortOf = (e) => e || "high";
+function place([model, effort]) {
+  const f = family(model);
+  if (!f) return null;
+  return FAMILIES.indexOf(f) * 10 + (hasEffort(f) ? EFFORTS.indexOf(effortOf(effort)) + 1 : 0);
+}
+function command(from, to) {
+  const same = family(from[0]) === to.model, out = [];
+  if (!same) out.push(`/model ${ARG[to.model]}`);
+  if (to.effort && (!same || to.effort !== effortOf(from[1]))) out.push(`/effort ${to.effort}`);
+  return out.join(" then ");
+}
 function typed(e) {
   if (e.type !== "user" || e.isMeta) return null;
   let c = e.message?.content;
@@ -435,7 +469,7 @@ function savedRung() {
   return [full, s.modelSettings?.[full]?.effortLevel || s.effortLevel || null];
 }
 var inner = { ...process.env, XEEF_INNER: "1" };
-function ask2(model, system2, prompt, schema) {
+function ask2(model, system2, prompt, schema2) {
   const t0 = Date.now();
   const r = (0, import_node_child_process2.spawnSync)(
     "claude",
@@ -453,7 +487,7 @@ function ask2(model, system2, prompt, schema) {
       "--output-format",
       "json",
       "--json-schema",
-      JSON.stringify(schema)
+      JSON.stringify(schema2)
     ],
     { input: prompt, encoding: "utf8", timeout: 9e4, env: inner, maxBuffer: 16 << 20 }
   );
@@ -490,9 +524,10 @@ function review2(model, task, cwd) {
 var claude = {
   id: "claude",
   name: "Claude Code",
-  ladder: ["haiku", "sonnet low", "sonnet medium", "sonnet high", "opus low", "opus medium", "opus high", "opus xhigh", "fable"],
+  ladder: ["haiku", "sonnet low", "sonnet medium", "sonnet high", "opus low", "opus medium", "opus high", "opus xhigh", "fable"].map(step),
   rule: "Anthropic's rule: if effort was lowered, restore it first; otherwise go one tier up.",
-  commands: "/effort <level>, /model <name>",
+  place,
+  command,
   judge: "haiku",
   reviewer: "sonnet",
   read,

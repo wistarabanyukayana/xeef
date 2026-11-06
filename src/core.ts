@@ -19,7 +19,10 @@ export type Event =
   | { kind: "model"; model: string; effort: string | null }
   | { kind: "usage_limit" }; // the harness says the usage limit is spent
 
-export type Verdict = { speak: boolean; kind: string; note: string; line: string; evidence: string };
+/** What the judge returns. `to` names a rung on the ladder; Xeef, not the judge, turns it into a command. */
+export type Verdict = { speak: boolean; kind: string; note: string; to: string; reason: string; evidence: string };
+/** A rung on a harness's ladder: `model` is a family name such as "opus"; `effort` is null where the model has none. */
+export type Step = { name: string; model: string; effort: string | null };
 export type Rung = [string | null, string | null];
 
 export class UsageLimit extends Error {}
@@ -31,9 +34,10 @@ const label = (j: Judge) => `${j.harness}:${j.model}`;
 export interface Harness {
   id: string; // "claude": names the config section, the CLI argument and the judge in the log
   name: string; // "Claude Code": the agent named in the judge's system prompt
-  ladder: string[]; // rungs, weakest first
+  ladder: Step[]; // weakest first
   rule: string; // how to climb the ladder
-  commands: string; // how the user changes rung
+  place(r: Rung): number | null; // orders any rung against the ladder's steps; null for an unknown model
+  command(from: Rung, to: Step): string; // what the user types to move from one rung to another
   judge: string; // default cheap model for the per-turn judge
   reviewer: string; // default stronger model for the weekly review
   read(file: string): { events: Event[]; cwd?: string };
@@ -42,10 +46,11 @@ export interface Harness {
   review(model: string, task: string, cwd: string): { rc: number | null; out: string }; // an agent that may edit files in cwd
 }
 
-export const SCHEMA = { type: "object", required: ["speak", "kind", "note", "line", "evidence"], properties: {
+export const schema = (h: Harness) => ({ type: "object", required: ["speak", "kind", "note", "to", "reason", "evidence"], properties: {
   speak: { type: "boolean" },
   kind: { type: "string", enum: ["none", "misread", "struggle", "stakes", "lighter"] },
-  note: { type: "string" }, line: { type: "string" }, evidence: { type: "string" } } };
+  note: { type: "string" }, to: { type: "string", enum: ["", ...h.ladder.map((s) => s.name)] },
+  reason: { type: "string" }, evidence: { type: "string" } } });
 
 export const system = (h: Harness) => `You watch a coding session between a user and an AI assistant (${h.name}) and decide whether the
 assistant should tell the user something about how the session is set up. You never talk to the user; your
@@ -54,20 +59,19 @@ verdict is handed to the assistant before the user's next prompt. Most of the ti
 Speak only for one of these, with evidence from the transcript:
 - misread: the latest one or two user prompts correct the assistant's reading of the request ("not what I
   meant", repeating themselves, re-explaining), and the assistant's last reply did not already restate or fix
-  it. note tells the assistant to restate the request in one sentence before acting; line is "" (the assistant
+  it. note tells the assistant to restate the request in one sentence before acting; to is "" (the assistant
   writes the restatement itself, you do not).
 - struggle: the work is going in circles (same fix retried, errors repeating, the user frustrated) and a
-  stronger rung would likely help. line suggests the next rung.
+  stronger rung would likely help. to is the next rung up.
 - stakes: the work now in progress, or clearly about to start, is expensive when wrong (see the profile and
-  the stakes paths) and the session is below the rung the profile asks for. line suggests the next rung.
-- lighter: the session is on a high rung while recent and upcoming work is routine. line suggests stepping down.
-Rung order: ${h.ladder.join(" < ")}. ${h.rule}
-Commands: ${h.commands}.
+  the stakes paths) and the session is below the rung the profile asks for. to is the rung the work needs.
+- lighter: the session is on a high rung while recent and upcoming work is routine. to is a lower rung that fits it.
+Rung order: ${h.ladder.map((s) => s.name).join(" < ")}. ${h.rule}
 
 Aim to speak on fewer than one prompt in ten; an earlier correction the assistant has since handled is not a reason. Do not speak because a session is long, because the user is terse, or because a single tool call failed.
 If you spoke recently, speak again only if something new happened. Write note as an instruction to the
-assistant (one or two sentences) and line as the one sentence the assistant should end its reply with,
-addressed to the user, naming the command and the reason in a few words. Empty strings when speak=false.`;
+assistant (one or two sentences, naming no command: the command is added for you) and reason as a few words
+for the user saying why. Empty strings when speak=false.`;
 
 const REVIEW_TASK = `You maintain profile.md in this folder: what a small session judge should know about this user to
 decide when to suggest a different model or effort, or a restatement. Read log.jsonl (verdicts, deliveries, and
@@ -154,7 +158,7 @@ const reviewerOf = (h: Harness): Judge => own(h).reviewer || { harness: h.id, mo
 /** Ask one judge. ponytail: only this harness can answer; the cross-harness fallback comes with the second harness. */
 function ask(h: Harness, j: Judge, prompt: string) {
   if (j.harness !== h.id) throw new Error(`judge harness "${j.harness}" is not built yet`);
-  return h.ask(j.model, system(h), prompt, SCHEMA);
+  return h.ask(j.model, system(h), prompt, schema(h));
 }
 
 // ---- signals and prompt --------------------------------------------------------------------------
@@ -224,6 +228,21 @@ export function judgePrompt(h: Harness, ev: Event[], cwd: string, sid: string) {
   return { n, rung, st, prompt };
 }
 
+const HEAD: Record<string, string> = { struggle: "This might go better with", stakes: "This one is worth", lighter: "This looks routine enough for" };
+const blank = (s: string | undefined) => /^[\s"'`\u2018\u2019\u201c\u201d.]*$/.test(s ?? "");
+
+/** The line the agent ends its reply with, built from the judge's rung, or why the verdict is dropped. */
+export function settle(h: Harness, v: Verdict, rung: Rung): { line: string; dropped?: string } {
+  if (!v.speak || !HEAD[v.kind]) return { line: "" }; // none and misread carry no command
+  const to = h.ladder.find((s) => s.name === v.to);
+  const cur = h.place(rung), next = to && h.place([to.model, to.effort]);
+  if (!to || next == null) return { line: "", dropped: `no rung "${v.to}" on the ladder` };
+  if (cur === null) return { line: "", dropped: `current rung ${rung.join(" ")} is not on the ladder` };
+  if (v.kind === "lighter" ? next >= cur : next <= cur) return { line: "", dropped: `${v.kind}: ${to.name} points the wrong way` };
+  const why = blank(v.reason) ? "" : `: ${v.reason.trim().replace(/[.\s]+$/, "")}`;
+  return { line: `${HEAD[v.kind]} ${h.command(rung, to)}${why}.` };
+}
+
 // ---- modes ---------------------------------------------------------------------------------------
 
 type HookInput = { session_id?: string; transcript_path?: string; cwd?: string };
@@ -263,8 +282,9 @@ export function judge(h: Harness, inp: HookInput) {
       continue;
     }
     const { v, secs, cost } = r;
-    log({ event: "verdict", sid, cwd, prompt_n: n, rung, judge: label(j), secs, cost, ...v });
-    if (v.speak && v.kind !== "none") jwrite(path.join(PENDING, `${sid}.json`), { ...v, prompt_n: n, rung });
+    const s = settle(h, v, rung);
+    log({ event: "verdict", sid, cwd, prompt_n: n, rung, judge: label(j), secs, cost, ...v, ...s });
+    if (v.speak && v.kind !== "none" && !s.dropped) jwrite(path.join(PENDING, `${sid}.json`), { ...v, ...s, prompt_n: n, rung });
     return;
   }
 }
@@ -273,7 +293,7 @@ export function judge(h: Harness, inp: HookInput) {
 export function inject(h: Harness, inp: HookInput): string | null {
   const sid = inp.session_id || "x";
   const file = path.join(PENDING, `${sid}.json`);
-  const v = jread<(Verdict & { prompt_n: number; rung: Rung }) | null>(file, null);
+  const v = jread<(Verdict & { line: string; prompt_n: number; rung: Rung }) | null>(file, null);
   if (!v) return null;
   fs.rmSync(file, { force: true });
   const n = prompts(h.read(inp.transcript_path || "").events);
@@ -342,14 +362,14 @@ export function backtest(h: Harness, folder: string, k: number, dry: boolean) {
   const sample = points.slice(0, Math.min(k, points.length));
   let spoke = 0;
   for (const p of sample) {
-    const { prompt } = judgePrompt(h, p.ev.slice(0, p.i), p.cwd, "backtest");
+    const { prompt, rung } = judgePrompt(h, p.ev.slice(0, p.i), p.cwd, "backtest");
     const head = { session: p.file.slice(0, 8), at: p.at, next_prompt: clip((p.ev[p.i] as { text: string }).text, 100) };
     if (dry) { console.log(JSON.stringify({ ...head, prompt })); continue; }
     const j = judgesOf(h)[0];
     try {
       const { v, secs, cost } = ask(h, j, prompt);
       spoke += Number(v.speak);
-      console.log(JSON.stringify({ ...head, judge: label(j), secs, cost, speak: v.speak, kind: v.kind, line: v.line, evidence: v.evidence }));
+      console.log(JSON.stringify({ ...head, judge: label(j), secs, cost, rung, speak: v.speak, kind: v.kind, to: v.to, ...settle(h, v, rung), evidence: v.evidence }));
     } catch (e) {
       console.log(JSON.stringify({ ...head, error: String(e).slice(0, 300) }));
     }

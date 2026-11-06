@@ -3,7 +3,7 @@ import { spawnSync } from "node:child_process";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { Event, Harness, Rung, UsageLimit, Verdict } from "./core";
+import { Event, Harness, Rung, Step, UsageLimit, Verdict } from "./core";
 
 type Block = { type?: string; text?: string; name?: string; is_error?: boolean; input?: { file_path?: string; command?: unknown } };
 type Entry = { type?: string; isMeta?: boolean; cwd?: string; requestedModel?: string; perTurnEffort?: string; effort?: string;
@@ -13,6 +13,29 @@ const SKIP = ["<command-", "<local-command", "<system-reminder", "<task-notifica
 const EDITS = ["Edit", "Write", "MultiEdit"];
 const NO_HOOKS = JSON.stringify({ disableAllHooks: true });
 const ALIASES: Record<string, string> = { opus: "claude-opus-5-5", sonnet: "claude-sonnet-5-5" };
+const FAMILIES = ["haiku", "sonnet", "opus", "fable"]; // weakest first
+const EFFORTS = ["low", "medium", "high", "xhigh", "max"];
+const ARG: Record<string, string> = { haiku: "haiku", sonnet: "sonnet", opus: "opus", fable: "claude-fable-5-1" };
+const step = (name: string): Step => { const [model, effort = null] = name.split(" "); return { name, model, effort }; };
+const family = (model: string | null) => FAMILIES.find((f) => (model || "").includes(f));
+const hasEffort = (f?: string) => f === "sonnet" || f === "opus";
+// ponytail: a rung with no recorded effort counts as high; check Claude Code's default if verdicts look off by one
+const effortOf = (e: string | null) => e || "high";
+
+/** Family first, then effort: any model ID and effort, listed on the ladder or not, gets a comparable number. */
+function place([model, effort]: Rung): number | null {
+  const f = family(model);
+  if (!f) return null;
+  return FAMILIES.indexOf(f) * 10 + (hasEffort(f) ? EFFORTS.indexOf(effortOf(effort)) + 1 : 0);
+}
+
+/** Effort is saved per model, so a model change also names the target's effort. */
+function command(from: Rung, to: Step) {
+  const same = family(from[0]) === to.model, out: string[] = [];
+  if (!same) out.push(`/model ${ARG[to.model]}`);
+  if (to.effort && (!same || to.effort !== effortOf(from[1]))) out.push(`/effort ${to.effort}`);
+  return out.join(" then ");
+}
 
 /** The text the user typed, or null for tool results, meta and command echoes. */
 function typed(e: Entry): string | null {
@@ -93,9 +116,9 @@ function review(model: string, task: string, cwd: string) {
 export const claude: Harness = {
   id: "claude",
   name: "Claude Code",
-  ladder: ["haiku", "sonnet low", "sonnet medium", "sonnet high", "opus low", "opus medium", "opus high", "opus xhigh", "fable"],
+  ladder: ["haiku", "sonnet low", "sonnet medium", "sonnet high", "opus low", "opus medium", "opus high", "opus xhigh", "fable"].map(step),
   rule: "Anthropic's rule: if effort was lowered, restore it first; otherwise go one tier up.",
-  commands: "/effort <level>, /model <name>",
+  place, command,
   judge: "haiku",
   reviewer: "sonnet",
   read, savedRung, ask, review,

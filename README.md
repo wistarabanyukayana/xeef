@@ -32,7 +32,7 @@ To remove Xeef, run `/plugin uninstall xeef@xeef`. Your data in `~/.xeef` stays 
 ## What happens in a session
 
 - **After each turn** (the `Stop` hook), Xeef starts the judge in the background and returns at once, so the turn does not wait. The judge needs at least two prompts in the session.
-- **When you send a prompt** (the `UserPromptSubmit` hook), a pending verdict goes to the agent as extra context. The agent ends its reply with a one-line suggestion, or ignores the verdict if your new prompt makes it irrelevant. A verdict more than two prompts old is dropped.
+- **When you send a prompt** (the `UserPromptSubmit` hook), a pending verdict goes to the agent as extra context. The agent ends its reply with a one-line suggestion, or ignores the verdict if your new prompt makes it irrelevant. A verdict more than two prompts old is dropped. The judge only picks the rung to move to; Xeef writes the `/model` or `/effort` command from the current rung, and drops a suggestion that points the wrong way.
 - **When a session starts** (the `SessionStart` hook), Xeef reports the last weekly review in one line. Once a week, after at least 30 log rows, it starts a new review in the background.
 
 When the usage limit is spent, Xeef skips the judge and logs the skip.
