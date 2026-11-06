@@ -86,7 +86,10 @@ Checked on 2026-11-06 against Claude Code 2.1.318, Codex 0.166.0, agy 1.5.0 and 
 - The slash commands that switch model and effort in Codex, agy and opencode.
 - Windows.
 
+- **Xeef will take over the owner's `setup-check.py`, as its own work item** (ruled 2026-11-06). That SessionStart hook compares a folder's plugins with `~/.claude/setup-expectations.json`: plugins wanted on or off, files that should not exist, folder plugins unused in recent sessions, and folders with no entry. It also reminds the agent about stakes work below Opus high. Xeef's plugin offers and `stakes` verdict cover part of this, and both tools keep a copy of the stakes paths. Until that work item lands, the owner keeps both copies in step by hand.
+
 ## Open questions
+- What the `setup-check.py` takeover keeps: the manifest format, which reports move into the judge and which stay mechanical at session start.
 
 - How Xeef finds which harness CLIs are installed and logged in, so it can offer a fallback. Turning one on is settled: the user adds another harness's entry to the judge list.
 - The npm package name. Nothing is published to npm yet; the plugin install does not need it.
